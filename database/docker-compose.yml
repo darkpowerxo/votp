@@ -1,0 +1,141 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Master Database
+  postgres-master:
+    image: bitnami/postgresql:15
+    container_name: votp-postgres-master
+    restart: unless-stopped
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_REPLICATION_USER=replicator
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_password
+      - POSTGRESQL_USERNAME=postgres
+      - POSTGRESQL_PASSWORD=adminpassword
+      - POSTGRESQL_DATABASE=votp_db
+      - POSTGRESQL_POSTGRES_PASSWORD=adminpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-master-data:/bitnami/postgresql
+      - ./database/init-sharding.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - votp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d votp_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Shard 1
+  postgres-shard-1:
+    image: bitnami/postgresql:15
+    container_name: votp-postgres-shard-1
+    restart: unless-stopped
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_REPLICATION_USER=replicator
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_password
+      - POSTGRESQL_MASTER_HOST=postgres-master
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_USERNAME=postgres
+      - POSTGRESQL_PASSWORD=adminpassword
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-shard-1-data:/bitnami/postgresql
+    networks:
+      - votp-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Shard 2
+  postgres-shard-2:
+    image: bitnami/postgresql:15
+    container_name: votp-postgres-shard-2
+    restart: unless-stopped
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_REPLICATION_USER=replicator
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_password
+      - POSTGRESQL_MASTER_HOST=postgres-master
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_USERNAME=postgres
+      - POSTGRESQL_PASSWORD=adminpassword
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-shard-2-data:/bitnami/postgresql
+    networks:
+      - votp-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and session storage
+  redis:
+    image: redis:7-alpine
+    container_name: votp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - votp-network
+    command: redis-server --appendonly yes --requirepass redis_password
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PgAdmin for database management (development only)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: votp-pgadmin
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@votp.com
+      - PGADMIN_DEFAULT_PASSWORD=admin123
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - votp-network
+    depends_on:
+      - postgres-master
+    profiles:
+      - dev
+
+volumes:
+  postgres-master-data:
+    driver: local
+  postgres-shard-1-data:
+    driver: local
+  postgres-shard-2-data:
+    driver: local
+  redis-data:
+    driver: local
+  pgadmin-data:
+    driver: local
+
+networks:
+  votp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
