@@ -1,0 +1,744 @@
+# VOTP Kubernetes Deployment
+# This file contains all the Kubernetes manifests for deploying VOTP in production
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: votp
+  labels:
+    name: votp
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: votp-config
+  namespace: votp
+data:
+  # Database configuration
+  DATABASE_HOST: "postgres-master-service"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "votp_db"
+  DATABASE_USER: "postgres"
+  
+  # Server configuration
+  HOST: "0.0.0.0"
+  PORT: "8000"
+  
+  # SMTP configuration
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  SMTP_USE_SSL: "true"
+  SMTP_FROM: "noreply@votp.com"
+  
+  # Logging
+  RUST_LOG: "info"
+
+---
+# Secret for sensitive data
+apiVersion: v1
+kind: Secret
+metadata:
+  name: votp-secrets
+  namespace: votp
+type: Opaque
+stringData:
+  # Database password
+  DATABASE_PASSWORD: "your-secure-database-password"
+  
+  # JWT secret
+  JWT_SECRET: "your-super-secure-jwt-secret-key-change-in-production-min-32-chars"
+  
+  # SMTP credentials
+  SMTP_USERNAME: "your-email@gmail.com"
+  SMTP_PASSWORD: "your-app-password"
+  
+  # PostgreSQL passwords
+  POSTGRESQL_PASSWORD: "your-secure-database-password"
+  POSTGRESQL_POSTGRES_PASSWORD: "your-secure-admin-password"
+  POSTGRESQL_REPLICATION_PASSWORD: "your-secure-replication-password"
+  
+  # Redis password
+  REDIS_PASSWORD: "your-secure-redis-password"
+
+---
+# PostgreSQL Master StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-master
+  namespace: votp
+spec:
+  serviceName: postgres-master-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-master
+  template:
+    metadata:
+      labels:
+        app: postgres-master
+    spec:
+      containers:
+      - name: postgres
+        image: bitnami/postgresql:15
+        env:
+        - name: POSTGRESQL_REPLICATION_MODE
+          value: "master"
+        - name: POSTGRESQL_REPLICATION_USER
+          value: "replicator"
+        - name: POSTGRESQL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: POSTGRESQL_REPLICATION_PASSWORD
+        - name: POSTGRESQL_USERNAME
+          value: "postgres"
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: POSTGRESQL_PASSWORD
+        - name: POSTGRESQL_DATABASE
+          value: "votp_db"
+        - name: POSTGRESQL_POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: POSTGRESQL_POSTGRES_PASSWORD
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-master-data
+          mountPath: /bitnami/postgresql
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres -d votp_db
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres -d votp_db
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-master-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: "20Gi"
+
+---
+# PostgreSQL Shard 1 StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-shard-1
+  namespace: votp
+spec:
+  serviceName: postgres-shard-1-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-shard-1
+  template:
+    metadata:
+      labels:
+        app: postgres-shard-1
+    spec:
+      containers:
+      - name: postgres
+        image: bitnami/postgresql:15
+        env:
+        - name: POSTGRESQL_REPLICATION_MODE
+          value: "slave"
+        - name: POSTGRESQL_REPLICATION_USER
+          value: "replicator"
+        - name: POSTGRESQL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: POSTGRESQL_REPLICATION_PASSWORD
+        - name: POSTGRESQL_MASTER_HOST
+          value: "postgres-master-service"
+        - name: POSTGRESQL_MASTER_PORT_NUMBER
+          value: "5432"
+        - name: POSTGRESQL_USERNAME
+          value: "postgres"
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: POSTGRESQL_PASSWORD
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-shard-1-data
+          mountPath: /bitnami/postgresql
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-shard-1-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: "20Gi"
+
+---
+# PostgreSQL Shard 2 StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-shard-2
+  namespace: votp
+spec:
+  serviceName: postgres-shard-2-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-shard-2
+  template:
+    metadata:
+      labels:
+        app: postgres-shard-2
+    spec:
+      containers:
+      - name: postgres
+        image: bitnami/postgresql:15
+        env:
+        - name: POSTGRESQL_REPLICATION_MODE
+          value: "slave"
+        - name: POSTGRESQL_REPLICATION_USER
+          value: "replicator"
+        - name: POSTGRESQL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: POSTGRESQL_REPLICATION_PASSWORD
+        - name: POSTGRESQL_MASTER_HOST
+          value: "postgres-master-service"
+        - name: POSTGRESQL_MASTER_PORT_NUMBER
+          value: "5432"
+        - name: POSTGRESQL_USERNAME
+          value: "postgres"
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: POSTGRESQL_PASSWORD
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-shard-2-data
+          mountPath: /bitnami/postgresql
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-shard-2-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: "20Gi"
+
+---
+# Redis StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: votp
+spec:
+  serviceName: redis-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --requirepass
+        - $(REDIS_PASSWORD)
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: REDIS_PASSWORD
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - --no-auth-warning
+            - -a
+            - $(REDIS_PASSWORD)
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - --no-auth-warning
+            - -a
+            - $(REDIS_PASSWORD)
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: "10Gi"
+
+---
+# VOTP Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: votp-backend
+  namespace: votp
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: votp-backend
+  template:
+    metadata:
+      labels:
+        app: votp-backend
+    spec:
+      containers:
+      - name: votp-backend
+        image: votp-backend:latest  # You'll need to build and push this image
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://postgres:$(DATABASE_PASSWORD)@postgres-master-service:5432/votp_db"
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: DATABASE_PASSWORD
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: JWT_SECRET
+        - name: HOST
+          valueFrom:
+            configMapKeyRef:
+              name: votp-config
+              key: HOST
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: votp-config
+              key: PORT
+        - name: SMTP_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: votp-config
+              key: SMTP_HOST
+        - name: SMTP_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: votp-config
+              key: SMTP_PORT
+        - name: SMTP_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: SMTP_USERNAME
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: votp-secrets
+              key: SMTP_PASSWORD
+        - name: SMTP_FROM
+          valueFrom:
+            configMapKeyRef:
+              name: votp-config
+              key: SMTP_FROM
+        - name: SMTP_USE_SSL
+          valueFrom:
+            configMapKeyRef:
+              name: votp-config
+              key: SMTP_USE_SSL
+        - name: RUST_LOG
+          valueFrom:
+            configMapKeyRef:
+              name: votp-config
+              key: RUST_LOG
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /playground
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /playground
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Services for PostgreSQL Master
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-master-service
+  namespace: votp
+spec:
+  selector:
+    app: postgres-master
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+---
+# Services for PostgreSQL Shard 1
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-shard-1-service
+  namespace: votp
+spec:
+  selector:
+    app: postgres-shard-1
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+---
+# Services for PostgreSQL Shard 2
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-shard-2-service
+  namespace: votp
+spec:
+  selector:
+    app: postgres-shard-2
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+---
+# Service for Redis
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: votp
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+  type: ClusterIP
+
+---
+# Service for VOTP Backend
+apiVersion: v1
+kind: Service
+metadata:
+  name: votp-backend-service
+  namespace: votp
+spec:
+  selector:
+    app: votp-backend
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP
+
+---
+# Ingress for VOTP Backend (external access)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: votp-backend-ingress
+  namespace: votp
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-cert: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+spec:
+  tls:
+  - hosts:
+    - api.votp.com
+    secretName: votp-tls-secret
+  rules:
+  - host: api.votp.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: votp-backend-service
+            port:
+              number: 8000
+
+---
+# ConfigMap for PostgreSQL initialization scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: votp
+data:
+  init.sql: |
+    -- VOTP Database Sharding Setup
+    -- This script sets up the database with foreign data wrappers for sharding
+
+    -- Enable required extensions
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "postgres_fdw";
+
+    -- Create the main database schema
+    \c votp_db;
+
+    -- Create users table (stored on master)
+    CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        phone_number VARCHAR(20),
+        bio TEXT,
+        password_hash VARCHAR(255) NOT NULL,
+        email_verified BOOLEAN DEFAULT FALSE,
+        verification_code VARCHAR(6),
+        verification_code_expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Create comments table (will be sharded)
+    CREATE TABLE IF NOT EXISTS comments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        content TEXT NOT NULL,
+        url TEXT NOT NULL,
+        normalized_url TEXT NOT NULL,
+        url_hash VARCHAR(64) NOT NULL,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        parent_id UUID REFERENCES comments(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Create verification_codes table for temporary storage
+    CREATE TABLE IF NOT EXISTS verification_codes (
+        email VARCHAR(255) PRIMARY KEY,
+        code VARCHAR(6) NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Create indexes for performance
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_comments_url_hash ON comments(url_hash);
+    CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id) WHERE parent_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at);
+
+    -- Create function to automatically update updated_at timestamp
+    CREATE OR REPLACE FUNCTION update_updated_at_column()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+    END;
+    $$ language 'plpgsql';
+
+    -- Create triggers for updated_at
+    DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+    CREATE TRIGGER update_users_updated_at 
+        BEFORE UPDATE ON users
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+    DROP TRIGGER IF EXISTS update_comments_updated_at ON comments;
+    CREATE TRIGGER update_comments_updated_at 
+        BEFORE UPDATE ON comments
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+    -- Grant permissions
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;
+
+    COMMIT;
+
+---
+# Horizontal Pod Autoscaler for VOTP Backend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: votp-backend-hpa
+  namespace: votp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: votp-backend
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# Network Policy for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: votp-network-policy
+  namespace: votp
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: votp
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: votp
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 587  # SMTP
+    - protocol: TCP
+      port: 465  # SMTPS
