@@ -4,18 +4,59 @@
 (function() {
   'use strict';
   
+  // Early check for extension context validity
+  try {
+    if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+      console.warn('VOTP: Extension context is invalid, skipping initialization');
+      return;
+    }
+  } catch (e) {
+    console.warn('VOTP: Extension context check failed, skipping initialization:', e.message);
+    return;
+  }
+  
   let sidebarContainer = null;
   let sidebarIframe = null;
   let isInitialized = false;
+  
+  // Utility function to check if extension context is valid
+  function isExtensionContextValid() {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id && chrome.runtime.sendMessage);
+    } catch (error) {
+      return false;
+    }
+  }
   
   // Configuration
   const SIDEBAR_WIDTH = '380px';
   const SIDEBAR_ID = 'votp-sidebar-container';
   const IFRAME_ID = 'votp-sidebar-iframe';
-  
+
+  // Send error response to sidebar when extension context is invalid
+  function sendExtensionErrorToSidebar(requestId, requestType = 'API_RESPONSE') {
+    if (sidebarIframe && sidebarIframe.contentWindow) {
+      try {
+        sidebarIframe.contentWindow.postMessage({
+          type: requestType,
+          requestId: requestId,
+          data: { error: 'Extension was reloaded. Please refresh the page.' }
+        }, '*');
+      } catch (error) {
+        console.log('VOTP: Could not send error message to sidebar');
+      }
+    }
+  }
+
   // Initialize the extension
   function initialize() {
     if (isInitialized) return;
+    
+    // Check if extension context is valid
+    if (!isExtensionContextValid()) {
+      console.warn('VOTP: Extension context invalidated. Page needs to be refreshed.');
+      return;
+    }
     
     console.log('VOTP Content Script: Initializing on', window.location.href);
     
@@ -23,7 +64,13 @@
     createSidebarContainer();
     
     // Listen for messages from background script
-    chrome.runtime.onMessage.addListener(handleMessage);
+    if (isExtensionContextValid()) {
+      try {
+        chrome.runtime.onMessage.addListener(handleMessage);
+      } catch (error) {
+        console.warn('VOTP: Could not set up message listener:', error.message);
+      }
+    }
     
     // Listen for window resize
     window.addEventListener('resize', handleWindowResize);
@@ -61,7 +108,32 @@
     // Create iframe for sidebar content
     sidebarIframe = document.createElement('iframe');
     sidebarIframe.id = IFRAME_ID;
-    sidebarIframe.src = chrome.runtime.getURL('sidebar/sidebar.html');
+    
+    try {
+      if (!chrome.runtime || !chrome.runtime.getURL) {
+        throw new Error('Extension context is invalid');
+      }
+      sidebarIframe.src = chrome.runtime.getURL('sidebar/sidebar.html');
+    } catch (error) {
+      console.error('VOTP: Failed to get extension URL, extension may have been reloaded');
+      // Show error message instead of loading sidebar
+      sidebarContainer.innerHTML = `
+        <div style="padding: 20px; color: #721c24; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin: 20px; font-family: Arial, sans-serif;">
+          <h4 style="margin: 0 0 8px 0;">VOTP Extension Reloaded</h4>
+          <p style="margin: 0 0 12px 0;">Please refresh this page to use VOTP comments.</p>
+          <button onclick="this.parentElement.parentElement.remove()" style="
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+          ">Close</button>
+        </div>
+      `;
+      return;
+    }
+    
     sidebarIframe.style.cssText = `
       width: 100%;
       height: 100%;
@@ -95,17 +167,43 @@
           break;
           
         case 'API_REQUEST':
-          // Forward API requests to background script
-          chrome.runtime.sendMessage({
-            type: 'API_REQUEST',
-            data: event.data.data
-          }, (response) => {
+          // Check extension context before making API requests
+          if (!isExtensionContextValid()) {
+            console.warn('VOTP: Extension context invalid, cannot make API request');
+            sendExtensionErrorToSidebar(event.data.requestId, 'API_RESPONSE');
+            break;
+          }
+          
+          // Forward API requests to background script with error handling
+          try {
+            chrome.runtime.sendMessage({
+              type: 'API_REQUEST',
+              data: event.data.data
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                console.warn('Extension context invalidated, sending error response');
+                sidebarIframe.contentWindow.postMessage({
+                  type: 'API_RESPONSE',
+                  requestId: event.data.requestId,
+                  data: { error: 'Extension was reloaded. Please refresh the page.' }
+                }, '*');
+                return;
+              }
+              
+              sidebarIframe.contentWindow.postMessage({
+                type: 'API_RESPONSE',
+                requestId: event.data.requestId,
+                data: response
+              }, '*');
+            });
+          } catch (error) {
+            console.warn('Chrome runtime error:', error);
             sidebarIframe.contentWindow.postMessage({
               type: 'API_RESPONSE',
               requestId: event.data.requestId,
-              data: response
+              data: { error: 'Extension error. Please refresh the page.' }
             }, '*');
-          });
+          }
           break;
           
         case 'GET_CURRENT_URL':
@@ -118,17 +216,43 @@
           break;
           
         case 'AUTH_REQUEST':
-          // Forward auth requests to background script
-          chrome.runtime.sendMessage({
-            type: event.data.authType,
-            data: event.data.data
-          }, (response) => {
+          // Check extension context before making auth requests
+          if (!isExtensionContextValid()) {
+            console.warn('VOTP: Extension context invalid, cannot make auth request');
+            sendExtensionErrorToSidebar(event.data.requestId, 'AUTH_RESPONSE');
+            break;
+          }
+          
+          // Forward auth requests to background script with error handling
+          try {
+            chrome.runtime.sendMessage({
+              type: event.data.authType,
+              data: event.data.data
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                console.warn('Extension context invalidated during auth request');
+                sidebarIframe.contentWindow.postMessage({
+                  type: 'AUTH_RESPONSE',
+                  requestId: event.data.requestId,
+                  data: { error: 'Extension was reloaded. Please refresh the page.' }
+                }, '*');
+                return;
+              }
+              
+              sidebarIframe.contentWindow.postMessage({
+                type: 'AUTH_RESPONSE',
+                requestId: event.data.requestId,
+                data: response
+              }, '*');
+            });
+          } catch (error) {
+            console.warn('Chrome runtime error during auth:', error);
             sidebarIframe.contentWindow.postMessage({
               type: 'AUTH_RESPONSE',
               requestId: event.data.requestId,
-              data: response
+              data: { error: 'Extension error. Please refresh the page.' }
             }, '*');
-          });
+          }
           break;
       }
     });
@@ -157,6 +281,12 @@
       createSidebarContainer();
     }
     
+    // Check if sidebarContainer was successfully created
+    if (!sidebarContainer) {
+      console.warn('VOTP: Could not create sidebar container, extension may be reloaded');
+      return;
+    }
+    
     // Add some padding to body to prevent content from being hidden
     document.body.style.marginRight = SIDEBAR_WIDTH;
     
@@ -166,18 +296,26 @@
     // Focus on sidebar
     setTimeout(() => {
       if (sidebarIframe && sidebarIframe.contentWindow) {
-        sidebarIframe.contentWindow.focus();
+        try {
+          sidebarIframe.contentWindow.focus();
+        } catch (error) {
+          console.log('VOTP: Could not focus sidebar:', error.message);
+        }
       }
     }, 300);
     
     // Notify sidebar that it's visible
     setTimeout(() => {
       if (sidebarIframe && sidebarIframe.contentWindow) {
-        sidebarIframe.contentWindow.postMessage({
-          type: 'SIDEBAR_VISIBLE',
-          url: window.location.href,
-          title: document.title
-        }, '*');
+        try {
+          sidebarIframe.contentWindow.postMessage({
+            type: 'SIDEBAR_VISIBLE',
+            url: window.location.href,
+            title: document.title
+          }, '*');
+        } catch (error) {
+          console.log('VOTP: Could not send message to sidebar:', error.message);
+        }
       }
     }, 100);
   }
@@ -192,11 +330,17 @@
     // Hide sidebar
     sidebarContainer.style.right = `-${SIDEBAR_WIDTH}`;
     
-    // Update storage state
-    chrome.runtime.sendMessage({
-      type: 'UPDATE_SIDEBAR_STATE',
-      data: { visible: false }
-    });
+    // Update storage state if extension context is valid
+    if (isExtensionContextValid()) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'UPDATE_SIDEBAR_STATE',
+          data: { visible: false }
+        });
+      } catch (error) {
+        console.log('VOTP: Could not update sidebar state:', error.message);
+      }
+    }
   }
   
   // Handle sidebar resize
@@ -268,11 +412,58 @@
     }
   });
   
-  // Initialize when DOM is ready
+  // Initialize when DOM is ready with error handling
+  function safeInitialize() {
+    try {
+      initialize();
+    } catch (error) {
+      console.warn('VOTP: Failed to initialize content script:', error.message);
+      // Create a simple error notification
+      if (document.body) {
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: #f8d7da;
+          color: #721c24;
+          padding: 12px 16px;
+          border: 1px solid #f5c6cb;
+          border-radius: 4px;
+          z-index: 9999999;
+          font-family: Arial, sans-serif;
+          font-size: 14px;
+          max-width: 300px;
+        `;
+        errorDiv.innerHTML = `
+          <strong>VOTP Extension:</strong><br>
+          Extension was reloaded. Please refresh this page to use VOTP.
+          <button onclick="this.parentElement.remove()" style="
+            float: right;
+            background: none;
+            border: none;
+            color: #721c24;
+            cursor: pointer;
+            font-size: 16px;
+            margin-left: 8px;
+          ">×</button>
+        `;
+        document.body.appendChild(errorDiv);
+        
+        // Auto-remove after 10 seconds
+        setTimeout(() => {
+          if (errorDiv.parentElement) {
+            errorDiv.remove();
+          }
+        }, 10000);
+      }
+    }
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initialize);
+    document.addEventListener('DOMContentLoaded', safeInitialize);
   } else {
-    initialize();
+    safeInitialize();
   }
   
   // Prevent multiple initializations

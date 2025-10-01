@@ -20,6 +20,16 @@ chrome.runtime.onInstalled.addListener((details) => {
       [STORAGE_KEYS.USER_DATA]: null
     });
   }
+  
+  // Create context menu
+  chrome.contextMenus.create({
+    id: 'votp-comment',
+    title: 'Comment on this page with VOTP',
+    contexts: ['page']
+  });
+  
+  // Set up periodic cleanup alarm
+  chrome.alarms.create('cleanup', { periodInMinutes: 60 });
 });
 
 // Action button click handler
@@ -39,16 +49,14 @@ chrome.action.onClicked.addListener(async (tab) => {
     chrome.tabs.sendMessage(tab.id, {
       type: 'TOGGLE_SIDEBAR',
       show: newState
+    }).catch(error => {
+      console.log('Could not communicate with content script - user may need to refresh the page');
     });
     
-    // Update action icon to reflect state
+    // Update action icon to reflect state (use same icons for now)
     chrome.action.setIcon({
       tabId: tab.id,
-      path: newState ? {
-        16: 'icons/icon16-active.png',
-        48: 'icons/icon48-active.png',
-        128: 'icons/icon128-active.png'
-      } : {
+      path: {
         16: 'icons/icon16.png',
         48: 'icons/icon48.png',
         128: 'icons/icon128.png'
@@ -215,6 +223,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
           48: 'icons/icon48.png',
           128: 'icons/icon128.png'
         }
+      }).catch(() => {
+        // Ignore icon setting errors
       });
     } catch (error) {
       console.error('Error resetting sidebar state:', error);
@@ -223,13 +233,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 });
 
 // Context menu setup (optional - for future features)
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'votp-comment',
-    title: 'Comment on this page with VOTP',
-    contexts: ['page']
-  });
-});
+// Note: Context menu creation moved to the main onInstalled listener above
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'votp-comment') {
@@ -237,6 +241,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     chrome.tabs.sendMessage(tab.id, {
       type: 'TOGGLE_SIDEBAR',
       show: true
+    }).catch(error => {
+      console.log('Could not communicate with content script - user may need to refresh the page');
     });
   }
 });
@@ -249,9 +255,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// Set up periodic cleanup
-chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create('cleanup', { periodInMinutes: 60 });
-});
+// Set up periodic cleanup on installation
+// Note: Service workers don't have a persistent onStartup, so we set this up during install
+// This is handled in the onInstalled listener above
 
 console.log('VOTP Background service worker initialized');

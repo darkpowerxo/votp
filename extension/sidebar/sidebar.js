@@ -442,7 +442,12 @@
             
         } catch (error) {
             console.error('Error checking email:', error);
-            showToast('Failed to check email. Please try again.', 'error');
+            // Check if it's an extension context error
+            if (isExtensionContextError(error)) {
+                showToast('Extension was reloaded. Please refresh the page.', 'error');
+            } else {
+                showToast('Failed to check email. Please try again.', 'error');
+            }
         } finally {
             setButtonLoading(elements.emailNextBtn, false);
         }
@@ -506,7 +511,12 @@
             
         } catch (error) {
             console.error('Login error:', error);
-            showToast(error.message || 'Login failed. Please try again.', 'error');
+            // Check if it's an extension context error
+            if (error.message && (error.message.includes('Extension was reloaded') || error.message.includes('Extension error'))) {
+                showToast('Extension was reloaded. Please refresh the page.', 'error');
+            } else {
+                showToast(error.message || 'Login failed. Please try again.', 'error');
+            }
         } finally {
             setButtonLoading(elements.loginBtn, false);
         }
@@ -681,6 +691,17 @@
         setButtonLoading(elements.postCommentBtn, true);
         
         try {
+            // Check if user is authenticated before making request
+            if (!appState.isAuthenticated || !appState.token) {
+                throw new Error('You must be logged in to post comments');
+            }
+            
+            if (!appState.currentUrl) {
+                throw new Error('Current page URL is not available');
+            }
+            
+            console.log('Posting comment:', { content, url: appState.currentUrl, authenticated: appState.isAuthenticated });
+            
             const response = await makeApiRequest({
                 query: `
                     mutation CreateComment($content: String!, $url: String!) {
@@ -703,13 +724,22 @@
                 requireAuth: true
             });
             
+            console.log('API response:', response);
+            
             if (response.error) {
                 throw new Error(response.error);
             }
             
+            // Check for GraphQL errors
+            if (response.data?.errors && response.data.errors.length > 0) {
+                const errorMessage = response.data.errors[0].message || 'GraphQL error occurred';
+                throw new Error(errorMessage);
+            }
+            
             const newComment = response.data?.data?.createComment;
             if (!newComment) {
-                throw new Error('Failed to create comment');
+                console.error('No comment returned from API:', response.data);
+                throw new Error('Failed to create comment - no comment data returned');
             }
             
             // Clear form
@@ -723,7 +753,30 @@
             
         } catch (error) {
             console.error('Error posting comment:', error);
-            showToast(error.message || 'Failed to post comment. Please try again.', 'error');
+            console.error('App state during error:', {
+                isAuthenticated: appState.isAuthenticated,
+                hasToken: !!appState.token,
+                hasUrl: !!appState.currentUrl,
+                currentUrl: appState.currentUrl
+            });
+            
+            // Check if it's an extension context error
+            if (isExtensionContextError(error)) {
+                showToast('Extension was reloaded. Please refresh the page.', 'error');
+            } else if (error.message.includes('logged in')) {
+                showToast('Please log in to post comments.', 'error');
+                // Show auth section if not authenticated
+                showAuthSection();
+            } else if (error.message.includes('Authentication required')) {
+                showToast('Your session has expired. Please log in again.', 'error');
+                // Clear auth state and show login
+                appState.isAuthenticated = false;
+                appState.token = null;
+                appState.user = null;
+                showAuthSection();
+            } else {
+                showToast(error.message || 'Failed to post comment. Please try again.', 'error');
+            }
         } finally {
             setButtonLoading(elements.postCommentBtn, false);
         }
@@ -772,6 +825,11 @@
             });
             
             if (response.error) {
+                // Check if it's an extension context error
+                if (response.error.includes('Extension was reloaded') || response.error.includes('Extension error')) {
+                    showExtensionContextError();
+                    return;
+                }
                 throw new Error(response.error);
             }
             
@@ -782,7 +840,12 @@
             
         } catch (error) {
             console.error('Error loading comments:', error);
-            showCommentsError('Failed to load comments');
+            // Check if it's an extension context error
+            if (isExtensionContextError(error)) {
+                showExtensionContextError();
+            } else {
+                showCommentsError('Failed to load comments');
+            }
         } finally {
             showCommentsLoading(false);
         }
@@ -886,6 +949,22 @@
         }
     }
     
+    // Show extension context error with specific messaging
+    function showExtensionContextError() {
+        if (elements.commentsError) {
+            elements.commentsError.classList.remove('hidden');
+            const errorText = elements.commentsError.querySelector('p');
+            if (errorText) {
+                errorText.innerHTML = `
+                    <strong>Extension Reloaded</strong><br>
+                    Please refresh this page to use VOTP comments.
+                    <br><br>
+                    <button class="retry-btn" onclick="window.location.reload()">Refresh Page</button>
+                `;
+            }
+        }
+    }
+    
     // Hide comments error
     function hideCommentsError() {
         if (elements.commentsError) {
@@ -918,6 +997,14 @@
         }
     }
     
+    // Check if error is due to extension context invalidation
+    function isExtensionContextError(error) {
+        const message = error.message || error.toString();
+        return message.includes('Extension was reloaded') || 
+               message.includes('Extension error') || 
+               message.includes('Extension context invalidated');
+    }
+
     // Utility functions
     function setButtonLoading(button, loading) {
         if (!button) return;
