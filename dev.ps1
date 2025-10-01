@@ -161,9 +161,10 @@ if (-not (Test-Path "backend\.env")) {
 Write-ColorOutput Cyan "`n🦀 Checking Rust backend..."
 Push-Location backend
 try {
-    if (-not (Test-Path "target\debug\votp-backend.exe") -and -not (Test-Path "target\debug\backend.exe")) {
+    if (-not (Test-Path "target\debug\votp-backend.exe") -and -not (Test-Path "target\debug\backend.exe") -and -not (Test-Path "target\release\votp-backend.exe")) {
         Write-ColorOutput Cyan "🔨 Building backend (first time)..."
-        cargo build
+        # Try release build to avoid debug symbol issues on Windows
+        cargo build --release
         if ($LASTEXITCODE -ne 0) {
             Write-ColorOutput Red "❌ Failed to build backend"
             exit 1

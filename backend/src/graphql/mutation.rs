@@ -1,12 +1,11 @@
 use crate::config::Config;
-use crate::models::{AuthPayload, Comment, UpdateProfileInput, User, VerificationCode};
+use crate::models::{AuthPayload, Comment, UpdateProfileInput, User};
 use crate::services::{auth::AuthService, email::EmailService};
 use crate::utils::{generate_verification_code, normalize_url};
 use async_graphql::{Context, Object, Result};
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use sqlx::PgPool;
-use std::collections::HashMap;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -49,7 +48,7 @@ impl Mutation {
 
         // Generate verification code
         let code = generate_verification_code();
-        let expires_at = Utc::now() + Duration::minutes(10);
+        let _expires_at = Utc::now() + chrono::Duration::minutes(10);
 
         // Store verification code (in production, use Redis or similar)
         // For now, we'll store it in a temporary table or in-memory store

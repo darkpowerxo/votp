@@ -47,7 +47,7 @@ impl Query {
         let pool = ctx.data::<PgPool>()?;
         
         // Normalize the URL to ensure consistent grouping
-        let (normalized_url, url_hash) = normalize_url(&url)
+        let (_normalized_url, url_hash) = normalize_url(&url)
             .map_err(|e| async_graphql::Error::new(format!("Invalid URL: {}", e)))?;
 
         let comments = sqlx::query_as::<_, Comment>(

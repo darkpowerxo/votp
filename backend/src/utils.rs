@@ -8,7 +8,7 @@ pub fn normalize_url(input_url: &str) -> Result<(String, String), Box<dyn std::e
     let mut url = Url::parse(input_url)?;
     
     // Convert to lowercase
-    url.set_scheme(&url.scheme().to_lowercase())?;
+    let _ = url.set_scheme(&url.scheme().to_lowercase());
     
     // Handle host normalization
     if let Some(host) = url.host_str() {
@@ -17,11 +17,11 @@ pub fn normalize_url(input_url: &str) -> Result<(String, String), Box<dyn std::e
     }
     
     // Normalize path - remove trailing slash unless it's the root
-    let path = url.path();
+    let path = url.path().to_string();
     let normalized_path = if path.len() > 1 && path.ends_with('/') {
         &path[..path.len()-1]
     } else {
-        path
+        &path
     };
     url.set_path(normalized_path);
     
@@ -93,8 +93,8 @@ fn create_url_hash(url: &str) -> String {
 
 pub fn generate_verification_code() -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
-    format!("{:06}", rng.gen_range(100000..=999999))
+    let mut rng = rand::rng();
+    format!("{:06}", rng.random_range(100000..=999999))
 }
 
 #[cfg(test)]

@@ -3,10 +3,7 @@ use actix_web::{web, App, HttpServer, Result};
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse};
-use sqlx::PgPool;
-use std::env;
-use tracing::{info, warn};
-use tracing_subscriber;
+use tracing::info;
 
 mod config;
 mod database;
@@ -35,7 +32,7 @@ async fn graphql_playground() -> Result<actix_web::HttpResponse> {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize tracing
-    tracing_subscriber::init();
+    tracing_subscriber::fmt::init();
 
     // Load configuration
     dotenvy::dotenv().ok();

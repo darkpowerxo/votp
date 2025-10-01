@@ -1,5 +1,5 @@
-use sqlx::{PgPool, Row};
-use tracing::{info, warn};
+use sqlx::PgPool;
+use tracing::info;
 
 pub async fn create_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
     info!("Connecting to database...");
@@ -7,7 +7,7 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
     let pool = PgPool::connect(database_url).await?;
     
     // Test the connection
-    let row: (i32,) = sqlx::query_as("SELECT 1")
+    let _row: (i32,) = sqlx::query_as("SELECT 1")
         .fetch_one(&pool)
         .await?;
     
@@ -90,22 +90,28 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // Create triggers for updated_at
+    // Create triggers for updated_at (separate queries to avoid multiple commands error)
+    sqlx::query("DROP TRIGGER IF EXISTS update_users_updated_at ON users")
+        .execute(pool)
+        .await?;
+    
     sqlx::query(
         r#"
-        DROP TRIGGER IF EXISTS update_users_updated_at ON users;
         CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
-            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
         "#,
     )
     .execute(pool)
     .await?;
 
+    sqlx::query("DROP TRIGGER IF EXISTS update_comments_updated_at ON comments")
+        .execute(pool)
+        .await?;
+    
     sqlx::query(
         r#"
-        DROP TRIGGER IF EXISTS update_comments_updated_at ON comments;
         CREATE TRIGGER update_comments_updated_at BEFORE UPDATE ON comments
-            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
         "#,
     )
     .execute(pool)
