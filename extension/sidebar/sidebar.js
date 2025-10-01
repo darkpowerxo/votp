@@ -214,10 +214,22 @@
         // Error handling
         elements.dismissError?.addEventListener('click', hideErrorBanner);
         
-        // Retry button in comments error (dynamically added)
+        // Handle dynamically added buttons (retry, edit, delete, refresh)
         elements.commentsList?.addEventListener('click', (e) => {
             if (e.target.classList.contains('retry-btn')) {
                 refreshComments();
+            } else if (e.target.classList.contains('edit-comment-btn')) {
+                const commentId = e.target.getAttribute('data-comment-id');
+                if (commentId) {
+                    editComment(commentId);
+                }
+            } else if (e.target.classList.contains('delete-comment-btn')) {
+                const commentId = e.target.getAttribute('data-comment-id');
+                if (commentId) {
+                    deleteComment(commentId);
+                }
+            } else if (e.target.classList.contains('refresh-page-btn')) {
+                window.location.reload();
             }
         });
     }
@@ -905,12 +917,12 @@
                     </div>
                     <div class="comment-actions">
                         ${comment.userId === appState.user?.id ? `
-                            <button class="comment-action-btn" onclick="editComment('${comment.id}')" title="Edit">
+                            <button class="comment-action-btn edit-comment-btn" data-comment-id="${comment.id}" title="Edit">
                                 <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708L10.5 8.207l-3-3L12.146.146zM11.207 9.207L13 7.414a.5.5 0 0 0-.207-.914l-7-2A.5.5 0 0 0 5.5 5.5v7a.5.5 0 0 0 .793.207l2-7z"/>
                                 </svg>
                             </button>
-                            <button class="comment-action-btn" onclick="deleteComment('${comment.id}')" title="Delete">
+                            <button class="comment-action-btn delete-comment-btn" data-comment-id="${comment.id}" title="Delete">
                                 <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
                                     <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
@@ -959,7 +971,7 @@
                     <strong>Extension Reloaded</strong><br>
                     Please refresh this page to use VOTP comments.
                     <br><br>
-                    <button class="retry-btn" onclick="window.location.reload()">Refresh Page</button>
+                    <button class="retry-btn refresh-page-btn">Refresh Page</button>
                 `;
             }
         }
@@ -1095,13 +1107,13 @@
         }
     }
     
-    // Global functions for comment actions (called from HTML)
-    window.editComment = function(commentId) {
+    // Comment action functions
+    function editComment(commentId) {
         // TODO: Implement edit functionality
         showToast('Edit functionality coming soon!', 'info');
-    };
+    }
     
-    window.deleteComment = async function(commentId) {
+    async function deleteComment(commentId) {
         if (!confirm('Are you sure you want to delete this comment?')) {
             return;
         }
@@ -1121,6 +1133,12 @@
                 throw new Error(response.error);
             }
             
+            // Check for GraphQL errors
+            if (response.data?.errors && response.data.errors.length > 0) {
+                const errorMessage = response.data.errors[0].message || 'GraphQL error occurred';
+                throw new Error(errorMessage);
+            }
+            
             const success = response.data?.data?.deleteComment;
             if (!success) {
                 throw new Error('Failed to delete comment');
@@ -1132,9 +1150,21 @@
             
         } catch (error) {
             console.error('Error deleting comment:', error);
-            showToast(error.message || 'Failed to delete comment', 'error');
+            // Check if it's an extension context error
+            if (isExtensionContextError(error)) {
+                showToast('Extension was reloaded. Please refresh the page.', 'error');
+            } else if (error.message.includes('Authentication required')) {
+                showToast('Your session has expired. Please log in again.', 'error');
+                // Clear auth state and show login
+                appState.isAuthenticated = false;
+                appState.token = null;
+                appState.user = null;
+                showAuthSection();
+            } else {
+                showToast(error.message || 'Failed to delete comment', 'error');
+            }
         }
-    };
+    }
     
     // Initialize when DOM is ready
     initialize();
