@@ -370,7 +370,7 @@ updateProfile(name: String, phoneNumber: String, bio: String): User!
 
 **Proprietary Commercial License**
 
-Copyright (c) 2024 VOTP Development Team. All rights reserved.
+Copyright (c) 2025 theproject. All rights reserved.
 
 This software and associated documentation files (the "Software") are proprietary and confidential. See [LICENSE](LICENSE) file for complete terms.
 
@@ -388,14 +388,8 @@ This software and associated documentation files (the "Software") are proprietar
 - 🐛 **Bug Reports**: GitHub Issues (internal repo)
 - 💡 **Feature Requests**: GitHub Discussions
 
-### Development Team
-- **Lead Developer**: [Name]
-- **Backend Engineer**: [Name] 
-- **Frontend Engineer**: [Name]
-- **DevOps Engineer**: [Name]
-
 ### Status & Monitoring
-- 🟢 **System Status**: [status.votp.com](https://status.votp.com)
+- 🟢 **System Status**: [to co](#)
 - 📊 **Performance**: Internal monitoring dashboard
 - 🔄 **CI/CD**: GitHub Actions pipeline
 
@@ -434,4 +428,4 @@ This software and associated documentation files (the "Software") are proprietar
 
 **Built with ❤️ by the VOTP team**
 
-*Last updated: January 2024*
+*Last updated: January 2025*

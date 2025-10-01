@@ -1,13 +1,11 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice of the People</title>
-    <link rel="stylesheet" href="sidebar.css">
-</head>
-<body>
-    <div id="app">
+<div id="app" style="height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #333; background: #ffffff;">
+    <style>
+        /* Inline critical styles to avoid external CSS loading issues */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        #app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+        .header { background: #ffffff; border-bottom: 1px solid #e0e0e0; padding: 16px; flex-shrink: 0; }
+        .main-content { flex: 1; overflow-y: auto; padding: 20px 16px; }
+    </style>
         <!-- Loading State -->
         <div id="loading-screen" class="loading-screen">
             <div class="loading-spinner"></div>
@@ -195,8 +193,7 @@
             <span id="error-message"></span>
             <button id="dismiss-error" class="dismiss-btn">×</button>
         </div>
-    </div>
+</div>
 
-    <script src="sidebar.js"></script>
-</body>
-</html>
+<link rel="stylesheet" href="sidebar.css">
+<script src="sidebar.js"></script>

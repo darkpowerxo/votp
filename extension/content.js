@@ -103,6 +103,7 @@
       background: white;
       border-left: 1px solid #e0e0e0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      pointer-events: auto;
     `;
     
     // Create iframe for sidebar content
@@ -131,6 +132,10 @@
           ">Close</button>
         </div>
       `;
+      // Set iframe to null since we're not using it
+      sidebarIframe = null;
+      // Add container to page 
+      document.body.appendChild(sidebarContainer);
       return;
     }
     
@@ -139,6 +144,7 @@
       height: 100%;
       border: none;
       background: white;
+      overflow: hidden;
     `;
     
     // Add iframe to container
@@ -260,8 +266,11 @@
   
   // Handle messages from background script
   function handleMessage(message, sender, sendResponse) {
+    console.log('🔍 VOTP: Received message:', message.type, message);
+    
     switch (message.type) {
       case 'TOGGLE_SIDEBAR':
+        console.log('🔍 VOTP: Toggle sidebar message, show:', message.show);
         if (message.show) {
           showSidebar();
         } else {
@@ -277,7 +286,10 @@
   
   // Show the sidebar
   function showSidebar() {
+    console.log('🔍 VOTP: showSidebar() called');
+    
     if (!sidebarContainer) {
+      console.log('🔍 VOTP: Creating sidebar container...');
       createSidebarContainer();
     }
     
@@ -287,11 +299,25 @@
       return;
     }
     
-    // Add some padding to body to prevent content from being hidden
+    console.log('🔍 VOTP: Sidebar container exists, setting up...');
+    
+    // Resize page content to make room for sidebar (preserves scrolling)
     document.body.style.marginRight = SIDEBAR_WIDTH;
+    document.body.style.transition = 'margin-right 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)';
+    console.log('🔍 VOTP: Body margin set to', SIDEBAR_WIDTH);
+    
+    // Update sidebar to not interfere with mouse events on main content
+    sidebarContainer.style.pointerEvents = 'none';  // Disable pointer events on container
+    if (sidebarIframe) {
+      sidebarIframe.style.pointerEvents = 'auto';   // Re-enable on iframe only
+      console.log('🔍 VOTP: Pointer events configured (container=none, iframe=auto)');
+    } else {
+      console.log('🔍 VOTP: No iframe found, pointer events only on container');
+    }
     
     // Show sidebar
     sidebarContainer.style.right = '0';
+    console.log('🔍 VOTP: Sidebar positioned to right=0');
     
     // Focus on sidebar
     setTimeout(() => {
@@ -324,8 +350,12 @@
   function hideSidebar() {
     if (!sidebarContainer) return;
     
-    // Remove body padding
+    // Remove page content margin to restore full width
     document.body.style.marginRight = '';
+    document.body.style.transition = 'margin-right 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)';
+    
+    // Restore pointer events
+    sidebarContainer.style.pointerEvents = 'auto';
     
     // Hide sidebar
     sidebarContainer.style.right = `-${SIDEBAR_WIDTH}`;
@@ -350,9 +380,10 @@
     const width = newWidth || SIDEBAR_WIDTH;
     sidebarContainer.style.width = width;
     
-    // Update body margin if sidebar is visible
+    // Update page content margin if sidebar is visible
     if (sidebarContainer.style.right === '0px') {
       document.body.style.marginRight = width;
+      document.body.style.transition = 'margin-right 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)';
     }
   }
   
@@ -388,6 +419,7 @@
     if (sidebarContainer) {
       document.body.removeChild(sidebarContainer);
       document.body.style.marginRight = '';
+      document.body.style.transition = '';
     }
   });
   
